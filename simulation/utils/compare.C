@@ -15,6 +15,11 @@
 #include <string>
 
 //---------------------------------------------------------------------------//
+// Helper functions
+template <class T>
+void fill_hist_from_vec(TTree& tree, std::size_t tree_index, T& vec, TH1D& hist);
+
+//---------------------------------------------------------------------------//
 /*!
  * Compare Geant4 vs. Celeritas root outputs produced by the `simulation` app.
  *
@@ -30,9 +35,8 @@ void compare()
   const auto g4_file = new TFile("config22_pi+_10GeV_4Tfield_t0.root", "read");
   const auto cel_file = new TFile("config22_pi+_10GeV_4Tfield_t0.cel.root", "read");
 
-  const auto g4_tree = (TTree*)g4_file->Get("CaloHits");
-  const auto cel_tree = (TTree*)cel_file->Get("CaloHits");
-
+  auto g4_tree = (TTree*)g4_file->Get("CaloHits");
+  auto cel_tree = (TTree*)cel_file->Get("CaloHits");
   // Get list of branches
   auto branches = g4_tree->GetListOfBranches();
   const auto num_branches = branches->GetEntries();
@@ -90,7 +94,7 @@ void compare()
     std::string g4_name = "g4_" + branch_name;
     std::string cel_name = "cel_" + branch_name;
     histograms_g4[i] =
-      new TH1D(g4_name.c_str(), g4_name.c_str(), num_bins, key->second.min, key->second.max);
+      new TH1D(g4_name.c_str(), branch_name.c_str(), num_bins, key->second.min, key->second.max);
     histograms_cel[i] =
       new TH1D(cel_name.c_str(), cel_name.c_str(), num_bins, key->second.min, key->second.max);
   }
@@ -98,13 +102,37 @@ void compare()
   // Fill histograms
   for (int i = 0; i < num_branches; i++) {
     const auto name = branches->At(i)->GetName();
+    g4_tree->GetEntry(0);
+    std::string type_name = g4_tree->GetLeaf(name)->GetTypeName();
+    bool is_vector = (type_name.find("vector") != std::string::npos) ? true : false;
+    bool is_double = (type_name.find("double") != std::string::npos) ? true : false;
 
     for (int j = 0; j < g4_tree->GetEntries(); j++) {
-      g4_tree->GetEntry(j);
-      histograms_g4[i]->Fill(g4_tree->GetLeaf(name)->GetValue());
+      if (is_vector) {
+        std::vector<double>* vec_d_branch_g4 = nullptr;
+        std::vector<double>* vec_d_branch_cel = nullptr;
+        std::vector<int>* vec_i_branch_g4 = nullptr;
+        std::vector<int>* vec_i_branch_cel = nullptr;
+        if (is_double) {
+          g4_tree->SetBranchAddress(name, &vec_d_branch_g4);
+          cel_tree->SetBranchAddress(name, &vec_d_branch_cel);
+          fill_hist_from_vec(*g4_tree, j, *vec_d_branch_g4, *histograms_g4[i]);
+          fill_hist_from_vec(*cel_tree, j, *vec_d_branch_cel, *histograms_cel[i]);
+        }
+        else {
+          g4_tree->SetBranchAddress(name, &vec_i_branch_g4);
+          cel_tree->SetBranchAddress(name, &vec_i_branch_cel);
+          fill_hist_from_vec(*g4_tree, j, *vec_i_branch_g4, *histograms_g4[i]);
+          fill_hist_from_vec(*cel_tree, j, *vec_i_branch_cel, *histograms_cel[i]);
+        }
+      }
 
-      cel_tree->GetEntry(j);
-      histograms_cel[i]->Fill(cel_tree->GetLeaf(name)->GetValue());
+      else {
+        g4_tree->GetEntry(j);
+        cel_tree->GetEntry(j);
+        histograms_g4[i]->Fill(g4_tree->GetLeaf(name)->GetValue());
+        histograms_cel[i]->Fill(cel_tree->GetLeaf(name)->GetValue());
+      }
     }
   }
 
@@ -136,7 +164,6 @@ void compare()
 
     // Draw legend and update axis
     legend->Draw();
-    gPad->RedrawAxis();
 
 #if 0
     // Save each canvas into a pdf file
@@ -153,4 +180,14 @@ void compare()
   gSystem->Exec(cmd_merge_pdfs.c_str());
   gSystem->Exec(cmd_rm_pdfs.c_str());
 #endif
+}
+
+//---------------------------------------------------------------------------//
+template <class T>
+void fill_hist_from_vec(TTree& tree, std::size_t tree_index, T& vec, TH1D& hist)
+{
+  tree.GetEntry(tree_index);
+  for (int k = 0; k < vec.size(); k++) {
+    hist.Fill(vec.at(k));
+  }
 }
